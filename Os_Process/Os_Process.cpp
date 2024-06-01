@@ -6,6 +6,11 @@
 #include <vector>
 #include <fstream>
 #include <string>
+#include <sstream>
+#include <algorithm>
+#include <numeric>
+#include <cmath>
+#include <chrono> 
 
 using namespace std;
 
@@ -196,7 +201,7 @@ private:
 };
 
 // Wait Queue
-queue<Process*> waitQueue;
+priority_queue<Process*> waitQueue;
 
 // 뮤텍스 및 조건 변수
 mutex mtx;
@@ -204,35 +209,45 @@ condition_variable cv;
 
 // 프로세스 목록 (shell, monitor)
 vector<Process*> processes;
+int nextPid = 0; // 다음 프로세스 PID
 
 // 스케줄링 함수
 void scheduler(DynamicQueue& dq) {
     while (true) {
-        // 1초 대기
         this_thread::sleep_for(chrono::seconds(1));
-
-        // 뮤텍스 잠금
         unique_lock<mutex> lock(mtx);
 
-        // Dynamic Queue에서 프로세스 실행 및 관리
-        Process* process = dq.dequeue();
-        if (process != nullptr) {
-            process->state = ProcessState::RUNNING;
-            // ... (실제 프로세스 실행 로직 구현)
+        // Wait Queue에서 깨어날 프로세스 처리
+        while (!waitQueue.empty() && waitQueue.top()->remainingTime <= 0) {
+            Process* process = waitQueue.top();
+            waitQueue.pop();
             process->state = ProcessState::READY;
-            dq.enqueue(process); // 다시 큐에 추가
+            dq.enqueue(process);
+        }
+
+        // Dynamic Queue에서 프로세스 실행 및 관리
+        Process* runningProcess = dq.dequeue();
+        if (runningProcess != nullptr) {
+            runningProcess->state = ProcessState::RUNNING;
+            // ... (실제 프로세스 실행 로직 구현)
+            runningProcess->state = ProcessState::READY;
+            dq.enqueue(runningProcess);
         }
 
         dq.promote();
         dq.split_n_merge(dq.top);
 
-        // Wait Queue에서 프로세스 상태 업데이트
-        // ... (대기 시간 감소, READY 상태로 변경)
+        // Wait Queue에서 대기 시간 감소
+        priority_queue<Process*> tempQueue;
+        while (!waitQueue.empty()) {
+            Process* process = waitQueue.top();
+            waitQueue.pop();
+            process->remainingTime--;
+            tempQueue.push(process);
+        }
+        waitQueue = move(tempQueue);
 
-        // 뮤텍스 잠금 해제
         lock.unlock();
-
-        // 조건 변수 알림
         cv.notify_all();
     }
 }
@@ -250,6 +265,49 @@ void shellProcess(int pid, int delay) {
         // ... (실제 명령어 처리 로직 구현)
 
         // delay 시간 동안 대기
+        this_thread::sleep_for(chrono::milliseconds(delay));
+    }
+}
+
+// 명령어 파싱 함수
+vector<string> parse(const string& command) {
+    vector<string> tokens;
+    istringstream iss(command);
+    string token;
+    while (iss >> token) {
+        tokens.push_back(token);
+    }
+    return tokens;
+}
+
+// 프로세스 실행 함수
+void executeProcess(const vector<string>& args) {
+    // 명령어 실행 로직 구현
+}
+
+// shell 프로세스 함수
+void shellProcess(int pid, int delay) {
+    ifstream inputFile("input.txt");
+
+    while (inputFile) {
+        string command;
+        getline(inputFile, command);
+        vector<string> args = parse(command);
+
+        if (!args.empty()) {
+            // 새로운 프로세스 생성 및 실행
+            Process* newProcess = new Process{ nextPid++, ProcessType::FOREGROUND, ProcessState::READY, 0 };
+            processes.push_back(newProcess);
+
+            unique_lock<mutex> lock(mtx);
+            DynamicQueue dq;
+            dq.enqueue(newProcess);
+            lock.unlock();
+
+            thread processThread(executeProcess, args);
+            processThread.detach(); // 백그라운드 실행
+        }
+
         this_thread::sleep_for(chrono::milliseconds(delay));
     }
 }
