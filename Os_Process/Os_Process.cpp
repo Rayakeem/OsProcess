@@ -1,3 +1,8 @@
+//20191485 김소희
+//2-1
+//2-2
+//2-3
+
 #include <iostream>
 #include <thread>
 #include <mutex>
@@ -13,7 +18,6 @@
 #include <chrono>
 #include <atomic>
 #include <future>
-
 
 using namespace std;
 
@@ -63,34 +67,35 @@ public:
 
     DynamicQueue() : top(nullptr), bottom(nullptr), P(nullptr), threshold(0) {}
 
-    // enqueue 함수
+    // enqueue 함수 (LIFO 형태)
     void enqueue(Process* process) {
         lock_guard<mutex> lock(mtx); // 뮤텍스 잠금
 
-        StackNode* newNode = new StackNode;
-        newNode->processes.push_back(process);
-        newNode->next = nullptr;
-
-        if (process->type == ProcessType::FOREGROUND) {
-            // FG 프로세스: 맨 위 스택에 추가
-            if (top == nullptr) {
-                top = bottom = newNode;
-                P = top; // P 초기화
-            }
-            else {
-                newNode->next = top;
-                top = newNode;
-            }
+        if (top == nullptr) {
+            // 첫 노드 생성
+            top = new StackNode;
+            top->processes.push_back(process);
+            top->next = nullptr;
+            bottom = top;
+            P = top;
         }
         else {
-            // BG 프로세스: 맨 아래 스택에 추가
-            if (bottom == nullptr) {
-                top = bottom = newNode;
-                P = top; // P 초기화
+            if (process->type == ProcessType::FOREGROUND) {
+                // FG 프로세스: 맨 위 스택에 추가
+                top->processes.push_back(process);
             }
             else {
-                bottom->next = newNode;
-                bottom = newNode;
+                // BG 프로세스: 맨 아래 스택에 추가
+                if (bottom == nullptr || bottom == top) {
+                    StackNode* newNode = new StackNode;
+                    newNode->processes.push_back(process);
+                    newNode->next = nullptr;
+                    bottom->next = newNode;
+                    bottom = newNode;
+                }
+                else {
+                    bottom->processes.push_back(process);
+                }
             }
         }
 
@@ -98,7 +103,7 @@ public:
         split_n_merge(top); // 리스트 분할 및 병합
     }
 
-    // dequeue 함수
+    // dequeue 함수 (LIFO 형태)
     Process* dequeue() {
         lock_guard<mutex> lock(mtx); // 뮤텍스 잠금
 
@@ -106,8 +111,8 @@ public:
             return nullptr; // 큐가 비어있음
         }
 
-        Process* process = top->processes.front();
-        top->processes.erase(top->processes.begin());
+        Process* process = top->processes.back();
+        top->processes.pop_back();
 
         if (top->processes.empty()) {
             StackNode* temp = top;
@@ -132,8 +137,8 @@ public:
         }
 
         if (!P->processes.empty()) {
-            Process* process = P->processes.front();
-            P->processes.erase(P->processes.begin());
+            Process* process = P->processes.back();
+            P->processes.pop_back();
 
             if (P->next == nullptr) {
                 // 새로운 스택 노드 생성
@@ -176,8 +181,6 @@ public:
         updateThreshold(); // threshold 업데이트
         split_n_merge(top); // 리스트 분할 및 병합
     }
-
-
 
     // split_n_merge 함수
     void split_n_merge(StackNode* node) {
@@ -306,8 +309,6 @@ void scheduler(DynamicQueue& dq) {
     }
 }
 
-
-
 // 유클리드 호제법 (최대공약수 계산)
 int gcd(int a, int b) {
     if (b == 0) {
@@ -334,7 +335,6 @@ int countPrimes(int n) {
 
     return count(isPrime.begin(), isPrime.end(), true);
 }
-
 
 // 프로세스 실행 함수
 void executeProcess(Process* process, const vector<string>& args) {
@@ -491,7 +491,6 @@ void shellProcess(int pid, int delay, DynamicQueue& dq) {  // delay: Y초
     }
 }
 
-
 // monitor 프로세스 함수
 void monitorProcess(int pid, int delay, DynamicQueue& dq) {
     while (true) {
@@ -540,18 +539,18 @@ void monitorProcess(int pid, int delay, DynamicQueue& dq) {
 
 int main() {
     // 프로세스 생성 (shell, monitor)
-    Process shell = { 0, ProcessType::FOREGROUND, ProcessState::READY, 0, "" };
-    Process monitor = { 1, ProcessType::BACKGROUND, ProcessState::READY, 0, "" };
-    processes.push_back(&shell);
-    processes.push_back(&monitor);
+    Process* shell = new Process{ 0, ProcessType::FOREGROUND, ProcessState::READY, 0, "" };
+    Process* monitor = new Process{ 1, ProcessType::BACKGROUND, ProcessState::READY, 0, "" };
+    processes.push_back(shell);
+    processes.push_back(monitor);
 
     DynamicQueue dq; // DynamicQueue 객체 생성
-    dq.enqueue(&shell);
-    dq.enqueue(&monitor);
+    dq.enqueue(shell);
+    dq.enqueue(monitor);
 
     // 스레드 생성 (shell, monitor, scheduler) - delay 값 조정
-    thread t1(shellProcess, shell.pid, 2000, ref(dq)); // 2초마다 명령어 실행
-    thread t2(monitorProcess, monitor.pid, 1000, ref(dq)); // 1초마다 상태 확인
+    thread t1(shellProcess, shell->pid, 2000, ref(dq)); // 2초마다 명령어 실행
+    thread t2(monitorProcess, monitor->pid, 1000, ref(dq)); // 1초마다 상태 확인
     thread t3(scheduler, ref(dq));
 
     t1.join(); // 셸 프로세스 종료 대기
